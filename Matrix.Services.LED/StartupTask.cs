@@ -65,7 +65,7 @@ namespace Matrix.Services.LED
             var returnMessage = new ValueSet();
             try
             {
-                //obtain and react to the command passed in by the client
+                // Determine action from the client message
                 var message = args.Request.Message["Request"] as string;
                 switch (message)
                 {
