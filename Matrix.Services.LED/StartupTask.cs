@@ -27,21 +27,17 @@ namespace Matrix.Services.LED
         /// </summary>
         private AppServiceConnection _connection;
 
+        private ThreadPoolTimer timer;
+        private ThreadPoolTimer timerEndShow;
 
-        private ThreadPoolTimer timer5;
-
-        private int _ledPinNumber = 23;
-        private GpioPin _ledPin;
-
-        private int _ledShowPinNumber = 5;
-        private GpioPin _ledShowPin;
-        private GpioPinValue pinValue = new GpioPinValue();
+        private List<GpioPinValue> PinValues = new List<GpioPinValue>();
+        private List<GpioPin> Pins = new List<GpioPin>();
 
         public void Run(IBackgroundTaskInstance taskInstance)
         {
             // Keep BackgroundTask alive
             _deferral = taskInstance.GetDeferral();
-            taskInstance.Canceled += OnTaskCanceled;
+            taskInstance.Canceled += OnTaskCanceled; 
 
             // Execution triggered by another application requesting this App Service
             // assigns an event handler to fire when a message is received from the client
@@ -51,17 +47,26 @@ namespace Matrix.Services.LED
 
             // Initialize the LED pin
             GpioController controller = GpioController.GetDefault();
-            _ledPin = controller.OpenPin(_ledPinNumber);
-            _ledPin.SetDriveMode(GpioPinDriveMode.Output);
 
-            _ledShowPin = controller.OpenPin(_ledShowPinNumber);
-            _ledShowPin.SetDriveMode(GpioPinDriveMode.Output);
+            Pins.Add(GpioController.GetDefault().OpenPin(5));
+            Pins[0].SetDriveMode(GpioPinDriveMode.Output);
+            Pins[0].Write(GpioPinValue.High);
+
+            Pins.Add(GpioController.GetDefault().OpenPin(6));
+            Pins[1].SetDriveMode(GpioPinDriveMode.Output);
+            Pins[1].Write(GpioPinValue.Low);
+
+            Pins.Add(GpioController.GetDefault().OpenPin(23));
+            Pins[2].SetDriveMode(GpioPinDriveMode.Output);
         }
 
         private async void ConnectionRequestReceived(AppServiceConnection sender, AppServiceRequestReceivedEventArgs args)
         {
-            // if you are doing anything awaitable, you need to get a deferral
+            // GetDeferral is required for doing anything awaitable. GetDeferral informs the system that a background task may continue working 
+            // after the IBackgroundTask.Run method returns. This is because the system may suspend or terminate the task after the Run method returns.
             var requestDeferral = args.GetDeferral();
+
+            // A map with keys(String) and values(Object). Only serializable types are allowed.
             var returnMessage = new ValueSet();
             try
             {
@@ -70,21 +75,24 @@ namespace Matrix.Services.LED
                 switch (message)
                 {
                     case "Turn LED On":
-                        _ledPin.Write(GpioPinValue.High);
+                        Pins[2].Write(GpioPinValue.High);
                         returnMessage.Add("Response", "OK");
                         await args.Request.SendResponseAsync(returnMessage);
-                        //let the OS know that the action is complete
-                        requestDeferral.Complete();
+                        requestDeferral.Complete();                             // Lets the system know the asynchronous operation is complete
                         break;
                     case "Turn LED Off":
-                        _ledPin.Write(GpioPinValue.Low);
+                        Pins[2].Write(GpioPinValue.Low);
                         returnMessage.Add("Response", "OK");
                         await args.Request.SendResponseAsync(returnMessage);
-                        //let the OS know that the action is complete
-                        requestDeferral.Complete();
+                        requestDeferral.Complete();                             // Lets the system know the asynchronous operation is complete
                         break;
-                    case "LED Show":
+                    case "LED Show On":
                         LEDShow();
+                        returnMessage.Add("Response", "OK");
+                        await args.Request.SendResponseAsync(returnMessage);
+                        break;
+                    case "LED Show Off":
+                        CompleteDeferral();
                         returnMessage.Add("Response", "OK");
                         await args.Request.SendResponseAsync(returnMessage);
                         break;
@@ -100,23 +108,28 @@ namespace Matrix.Services.LED
         {
             // Creates a periodic timer and specifies a method to call after the periodic timer is complete. 
             // The periodic timer is complete when the timer has expired without being reactivated, and the final call to handler has finished.
-            timer5 = ThreadPoolTimer.CreatePeriodicTimer(Timer_Tick5, TimeSpan.FromMilliseconds(500));
+            timer = ThreadPoolTimer.CreatePeriodicTimer(TimerTick, TimeSpan.FromMilliseconds(500));
+
+            // This timer will end the show
+            timerEndShow = ThreadPoolTimer.CreatePeriodicTimer(CompleteDeferral, TimeSpan.FromMilliseconds(500));
         }
 
-        private void Timer_Tick5(ThreadPoolTimer timer) { SwitchLED(0); }
+        private void TimerTick(ThreadPoolTimer timer)
+        {
+            SwitchLED(5);
+            SwitchLED(6);
+        }
 
         private void SwitchLED(int index)
         {
-            pinValue = (pinValue == GpioPinValue.High) ? GpioPinValue.Low : GpioPinValue.High;
-            _ledShowPin.Write(pinValue);
+            Pins[index].Write((Pins[index].Read() == GpioPinValue.High) ? GpioPinValue.Low : GpioPinValue.High);
         }
-
 
         /// <summary>
         /// When done with timer, it should be cancelled.
         /// </summary>
         /// <param name="timer"></param>
-        private void CloseTimer(ThreadPoolTimer timer)
+        private void CancelTimer(ThreadPoolTimer timer)
         {
             if (timer != null)
             {
@@ -124,10 +137,35 @@ namespace Matrix.Services.LED
             }
         }
 
+        /// <summary>
+        /// Signature for CreatePeriodicTimer
+        /// </summary>
+        /// <param name="timer"></param>
+        private void CompleteDeferral(ThreadPoolTimer timer)
+        {
+            // Cancels or ends a timer
+            CancelTimer(timer);
+            CompleteDeferral();
+        }
+
+        /// <summary>
+        /// Signature needed for OnTaskCancelled delegate
+        /// </summary>
+        /// <param name="sender"></param>
+        /// <param name="reason"></param>
         private void OnTaskCanceled(IBackgroundTaskInstance sender, BackgroundTaskCancellationReason reason)
+        {
+            CompleteDeferral();
+        }
+
+        /// <summary>
+        /// Completes a deferral if it exists
+        /// </summary>
+        private void CompleteDeferral()
         {
             if (_deferral != null)
             {
+                // Lets the system know the asynchronous operation is complete
                 _deferral.Complete();
             }
         }
